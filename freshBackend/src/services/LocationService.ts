@@ -348,8 +348,8 @@ export class LocationService {
     // Add demo hospitals
     const demoHospitals: NearestHospitalResult[] = [
       {
-        hospitalId: 'hospital-1',
-        hospital: { name: 'AIIMS Delhi' },
+        hospitalId: 'hosp1',
+        hospital: { name: 'City General Hospital' },
         location: { latitude: 28.5672, longitude: 77.2100 },
         distance: 0,
         estimatedArrival: 0,
@@ -358,8 +358,8 @@ export class LocationService {
         specializations: ['emergency', 'cardiology', 'neurology', 'trauma']
       },
       {
-        hospitalId: 'hospital-2',
-        hospital: { name: 'Safdarjung Hospital' },
+        hospitalId: 'hosp2',
+        hospital: { name: 'Emergency Medical Center' },
         location: { latitude: 28.5706, longitude: 77.2091 },
         distance: 0,
         estimatedArrival: 0,
@@ -368,14 +368,34 @@ export class LocationService {
         specializations: ['emergency', 'orthopedics', 'pediatrics']
       },
       {
-        hospitalId: 'hospital-3',
-        hospital: { name: 'Max Hospital Saket' },
+        hospitalId: 'hosp3',
+        hospital: { name: 'Cardiac Specialty Hospital' },
         location: { latitude: 28.5244, longitude: 77.2066 },
         distance: 0,
         estimatedArrival: 0,
         availableBeds: 25,
         hasEmergencyServices: true,
         specializations: ['emergency', 'cardiology', 'oncology', 'neurology']
+      },
+      {
+        hospitalId: 'hosp4',
+        hospital: { name: 'Trauma Center' },
+        location: { latitude: 28.6304, longitude: 77.2177 },
+        distance: 0,
+        estimatedArrival: 0,
+        availableBeds: 40,
+        hasEmergencyServices: true,
+        specializations: ['emergency', 'trauma', 'orthopedics', 'surgery']
+      },
+      {
+        hospitalId: 'hosp5',
+        hospital: { name: 'University Medical Center' },
+        location: { latitude: 28.6448, longitude: 77.2167 },
+        distance: 0,
+        estimatedArrival: 0,
+        availableBeds: 35,
+        hasEmergencyServices: true,
+        specializations: ['emergency', 'internal', 'pediatrics', 'obstetrics']
       }
     ];
 
