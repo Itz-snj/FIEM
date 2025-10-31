@@ -1,6 +1,7 @@
 import { Service } from "@tsed/di";
 import { BadRequest, NotFound } from "@tsed/exceptions";
 import { LocationService } from "./LocationService.js";
+import { WebSocketService } from "./WebSocketService.js";
 
 // Define interfaces locally
 interface Coordinates {
@@ -68,7 +69,11 @@ export class HospitalIntegrationService {
     capacity: HospitalCapacity;
   }> = [];
 
-  constructor(private locationService: LocationService) {
+  private socketService?: WebSocketService; // Optional to avoid circular dependencies
+
+  constructor(
+    private locationService: LocationService
+  ) {
     this.initializeDemoData();
   }
 
@@ -425,7 +430,30 @@ export class HospitalIntegrationService {
       this.capacityUpdateHistory = this.capacityUpdateHistory.slice(-1000);
     }
 
-    console.log(`Hospital ${hospitalId} capacity updated:`, updatedCapacity);
+    // 🔔 Emit real-time hospital capacity update
+    if (this.socketService) {
+      this.socketService.broadcastToEmergencyExecutives('hospital:capacity_updated', {
+        hospitalId,
+        capacity: updatedCapacity,
+        timestamp: new Date(),
+        availabilityStatus: {
+          totalBeds: updatedCapacity.totalBeds,
+          availableBeds: updatedCapacity.availableBeds,
+          icuAvailable: updatedCapacity.availableIcuBeds,
+          emergencyAvailable: updatedCapacity.availableEmergencyBeds,
+          occupancyRate: ((updatedCapacity.totalBeds - updatedCapacity.availableBeds) / updatedCapacity.totalBeds * 100).toFixed(1)
+        },
+        message: `Hospital ${hospitalId} capacity updated - ${updatedCapacity.availableBeds} beds available`
+      });
+
+      // Also notify hospitals namespace
+      this.socketService.sendMessageToHospital(hospitalId, 'capacity:updated', {
+        capacity: updatedCapacity,
+        timestamp: new Date()
+      });
+    }
+
+    console.log(`📡 Hospital ${hospitalId} capacity updated:`, updatedCapacity);
   }
 
   /**
@@ -635,5 +663,12 @@ export class HospitalIntegrationService {
     });
 
     console.log('Hospital integration demo data initialized');
+  }
+
+  /**
+   * 🔔 Public method to set socket service (to avoid circular dependency)
+   */
+  public setSocketService(socketService: WebSocketService) {
+    this.socketService = socketService;
   }
 }

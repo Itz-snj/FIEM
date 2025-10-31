@@ -63,7 +63,12 @@ export class LocationService {
    * Update driver location in real-time
    */
   async updateDriverLocation(driverId: string, location: LocationPoint, status: DriverStatus): Promise<void> {
+    console.log(`Updating location for driver ${driverId}:`, JSON.stringify(location, null, 2));
+    
     if (!isValidCoordinates(location)) {
+      console.error(`Invalid coordinates for driver ${driverId}:`, location);
+      console.error(`Latitude: ${location.latitude} (type: ${typeof location.latitude})`);
+      console.error(`Longitude: ${location.longitude} (type: ${typeof location.longitude})`);
       throw new BadRequest("Invalid GPS coordinates provided");
     }
 

@@ -6,6 +6,8 @@ import { BadRequest, NotFound } from "@tsed/exceptions";
 import { BookingService } from "../../services/BookingService.js";
 import { SmartDispatchService } from "../../services/SmartDispatchService.js";
 import { HospitalIntegrationService } from "../../services/HospitalIntegrationService.js";
+import { Priority } from "../../models/Booking.js";
+import { AmbulanceType } from "../../models/Driver.js";
 
 // Simple request/response interfaces
 interface CreateBookingRequest {

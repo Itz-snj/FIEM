@@ -76,6 +76,21 @@ export class LocationController {
     };
   }
 
+  @Get("/drivers/active")
+  @Summary("Get all active driver locations")
+  @Description("Get real-time locations of all active drivers for monitoring")
+  @Returns(200, Array)
+  async getAllActiveDrivers(): Promise<any[]> {
+    try {
+      const activeDrivers = await this.locationService.getAllActiveDriverLocations();
+      return activeDrivers;
+    } catch (error) {
+      // Return empty array instead of error if no active drivers
+      console.log('No active drivers found:', error.message);
+      return [];
+    }
+  }
+
   @Get("/drivers/:driverId")
   @Summary("Get driver location")
   @Description("Get current location and status of a specific driver")
@@ -99,14 +114,20 @@ export class LocationController {
   @Returns(200, Array)
   @Returns(400, BadRequest)
   async findNearestDrivers(
-    @BodyParams() searchRequest: NearestSearchRequest
+    @BodyParams() searchRequest: NearestSearchRequest & { radius?: number }
   ): Promise<NearestDriverResult[]> {
     const location: Coordinates = {
       latitude: searchRequest.latitude,
       longitude: searchRequest.longitude
     };
 
-    const radiusKm = searchRequest.radiusKm || LOCATION_CONSTANTS.DEFAULT_SEARCH_RADIUS_KM;
+    // Handle both radiusKm and radius (convert meters to km if needed)
+    let radiusKm = searchRequest.radiusKm || LOCATION_CONSTANTS.DEFAULT_SEARCH_RADIUS_KM;
+    if (searchRequest.radius && !searchRequest.radiusKm) {
+      // If radius is provided and it's a large number, assume it's in meters
+      radiusKm = searchRequest.radius > 1000 ? searchRequest.radius / 1000 : searchRequest.radius;
+    }
+    
     const maxResults = Math.min(searchRequest.maxResults || 10, 50); // Limit to 50 results
 
     return await this.locationService.findNearestDrivers(
@@ -123,14 +144,20 @@ export class LocationController {
   @Returns(200, Array)
   @Returns(400, BadRequest)
   async findNearestHospitals(
-    @BodyParams() searchRequest: HospitalSearchRequest
+    @BodyParams() searchRequest: HospitalSearchRequest & { radius?: number }
   ): Promise<NearestHospitalResult[]> {
     const location: Coordinates = {
       latitude: searchRequest.latitude,
       longitude: searchRequest.longitude
     };
 
-    const radiusKm = searchRequest.radiusKm || LOCATION_CONSTANTS.DEFAULT_SEARCH_RADIUS_KM;
+    // Handle both radiusKm and radius (convert meters to km if needed)
+    let radiusKm = searchRequest.radiusKm || LOCATION_CONSTANTS.DEFAULT_SEARCH_RADIUS_KM;
+    if (searchRequest.radius && !searchRequest.radiusKm) {
+      // If radius is provided and it's a large number, assume it's in meters
+      radiusKm = searchRequest.radius > 1000 ? searchRequest.radius / 1000 : searchRequest.radius;
+    }
+    
     const maxResults = Math.min(searchRequest.maxResults || 10, 50);
 
     return await this.locationService.findNearestHospitals(
@@ -140,14 +167,6 @@ export class LocationController {
       searchRequest.requireEmergencyServices,
       searchRequest.requiredSpecializations
     );
-  }
-
-  @Get("/drivers/active")
-  @Summary("Get all active driver locations")
-  @Description("Get real-time locations of all active drivers for monitoring")
-  @Returns(200, Array)
-  async getAllActiveDrivers(): Promise<any[]> {
-    return await this.locationService.getAllActiveDriverLocations();
   }
 
   @Post("/route/calculate")

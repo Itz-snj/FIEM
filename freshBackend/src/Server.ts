@@ -1,11 +1,12 @@
 import {join} from "node:path";
 import {Configuration} from "@tsed/di";
 import {application} from "@tsed/platform-http";
-import "@tsed/platform-log-request"; // remove this import if you don&#x27;t want log request
+import "@tsed/platform-log-request"; // remove this import if you don't want log request
 import "@tsed/platform-express"; // /!\ keep this import
 import "@tsed/ajv";
 import "@tsed/swagger";
 import "@tsed/mongoose";
+import "@tsed/socketio"; // Add official Ts.ED Socket.io support
 import {config} from "./config/index.js";
 import * as rest from "./controllers/rest/index.js";
 import * as pages from "./controllers/pages/index.js";
@@ -15,6 +16,12 @@ import * as pages from "./controllers/pages/index.js";
   acceptMimes: ["application/json"],
   httpPort: process.env.PORT || 8083,
   httpsPort: false, // CHANGE
+  socketIO: {
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    }
+  },
   mount: {
     "/rest": [
       ...Object.values(rest)

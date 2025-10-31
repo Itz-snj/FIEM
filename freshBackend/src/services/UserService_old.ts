@@ -1,9 +1,8 @@
 import { Service } from "@tsed/di";
-import { Model } from "@tsed/mongoose";
+import { MongooseModel } from "@tsed/mongoose";
 import { Inject } from "@tsed/di";
 import { BadRequest, Unauthorized, NotFound } from "@tsed/exceptions";
 import { User, UserRole, UserStatus } from "../models/User.js";
-import type { Model as MongooseModelType } from "mongoose";
 
 export interface UserRegistrationDTO {
   fullName: string;
@@ -35,10 +34,10 @@ export interface UserUpdateDTO {
 
 @Service()
 export class UserService {
-  @Inject(User)
-  private userModel: MongooseModelType<User>;
+  @Inject()
+  private userModel: MongooseModel<User>;
 
-  async register(userData: UserRegistrationDTO): Promise<any> {
+  async register(userData: UserRegistrationDTO): Promise<User> {
     // Check if user already exists
     const existingUser = await this.userModel.findOne({
       $or: [
@@ -56,7 +55,7 @@ export class UserService {
 
     // Create new user
     const newUser = new this.userModel({
-      fullName: userData.fullName,
+      name: userData.fullName,
       email: userData.email,
       phone: userData.phone,
       password: userData.password, // In production, hash this!
@@ -78,7 +77,7 @@ export class UserService {
     };
   }
 
-  async login(loginData: UserLoginDTO): Promise<{ user: any; token: string }> {
+  async login(loginData: UserLoginDTO): Promise<{ user: User; token: string }> {
     const user = await this.userModel.findOne({ email: loginData.email });
 
     if (!user) {
@@ -121,7 +120,7 @@ export class UserService {
     };
   }
 
-  async getUserById(userId: string): Promise<any> {
+  async getUserById(userId: string): Promise<User> {
     const user = await this.userModel.findById(userId);
     
     if (!user) {
@@ -136,83 +135,68 @@ export class UserService {
     };
   }
 
-  async updateUser(userId: string, updateData: UserUpdateDTO): Promise<any> {
-    const user = await this.userModel.findById(userId);
+  async updateUser(userId: string, updateData: UserUpdateDTO): Promise<User> {
+    const userIndex = this.users.findIndex(u => u._id === userId);
 
-    if (!user) {
+    if (userIndex === -1) {
       throw new NotFound("User not found");
     }
 
-    // Update user with new data
-    await this.userModel.updateOne(
-      { _id: userId },
-      {
-        ...updateData,
-        updatedAt: new Date()
-      }
-    );
+    this.users[userIndex] = {
+      ...this.users[userIndex],
+      ...updateData,
+      updatedAt: new Date()
+    };
 
-    // Return updated user
-    return this.getUserById(userId);
+    const { password, ...userResponse } = this.users[userIndex];
+    return userResponse;
   }
 
-  async updateUserStatus(userId: string, status: UserStatus): Promise<any> {
-    const user = await this.userModel.findById(userId);
+  async updateUserStatus(userId: string, status: UserStatus): Promise<User> {
+    const userIndex = this.users.findIndex(u => u._id === userId);
 
-    if (!user) {
+    if (userIndex === -1) {
       throw new NotFound("User not found");
     }
 
-    await this.userModel.updateOne(
-      { _id: userId },
-      {
-        status,
-        updatedAt: new Date()
-      }
-    );
+    this.users[userIndex].status = status;
+    this.users[userIndex].updatedAt = new Date();
 
-    return this.getUserById(userId);
+    const { password, ...userResponse } = this.users[userIndex];
+    return userResponse;
   }
 
-  async verifyEmail(userId: string): Promise<any> {
-    const user = await this.userModel.findById(userId);
+  async verifyEmail(userId: string): Promise<User> {
+    const userIndex = this.users.findIndex(u => u._id === userId);
 
-    if (!user) {
+    if (userIndex === -1) {
       throw new NotFound("User not found");
     }
 
-    await this.userModel.updateOne(
-      { _id: userId },
-      {
-        isEmailVerified: true,
-        status: UserStatus.ACTIVE,
-        updatedAt: new Date()
-      }
-    );
+    this.users[userIndex].isEmailVerified = true;
+    this.users[userIndex].status = UserStatus.ACTIVE;
+    this.users[userIndex].updatedAt = new Date();
 
-    return this.getUserById(userId);
+    const { password, ...userResponse } = this.users[userIndex];
+    return userResponse;
   }
 
-  async verifyPhone(userId: string): Promise<any> {
-    const user = await this.userModel.findById(userId);
+  async verifyPhone(userId: string): Promise<User> {
+    const userIndex = this.users.findIndex(u => u._id === userId);
 
-    if (!user) {
+    if (userIndex === -1) {
       throw new NotFound("User not found");
     }
 
-    await this.userModel.updateOne(
-      { _id: userId },
-      {
-        isPhoneVerified: true,
-        updatedAt: new Date()
-      }
-    );
+    this.users[userIndex].isPhoneVerified = true;
+    this.users[userIndex].updatedAt = new Date();
 
-    return this.getUserById(userId);
+    const { password, ...userResponse } = this.users[userIndex];
+    return userResponse;
   }
 
-  async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<any> {
-    const user = await this.userModel.findById(userId);
+  async changePassword(userId: string, oldPassword: string, newPassword: string): Promise<void> {
+    const user = this.users.find(u => u._id === userId);
 
     if (!user) {
       throw new NotFound("User not found");
@@ -222,58 +206,31 @@ export class UserService {
       throw new BadRequest("Current password is incorrect");
     }
 
-    await this.userModel.updateOne(
-      { _id: userId },
-      {
-        password: newPassword, // In production, hash this!
-        updatedAt: new Date()
-      }
+    user.password = newPassword;
+    user.updatedAt = new Date();
+  }
+
+  async getUsersByRole(role: UserRole): Promise<User[]> {
+    return this.users
+      .filter(u => u.role === role)
+      .map(({ password, ...user }) => user);
+  }
+
+  async searchUsers(query: string, role?: UserRole): Promise<User[]> {
+    let filteredUsers = this.users.filter(user => 
+      user.fullName.toLowerCase().includes(query.toLowerCase()) ||
+      user.email.toLowerCase().includes(query.toLowerCase()) ||
+      user.phone.includes(query)
     );
 
-    return { message: "Password changed successfully" };
+    if (role) {
+      filteredUsers = filteredUsers.filter(u => u.role === role);
+    }
+
+    return filteredUsers.map(({ password, ...user }) => user);
   }
 
-  async getUsersByRole(role: UserRole): Promise<any[]> {
-    const users = await this.userModel.find({ role }).select('-password');
-    
-    return users.map(user => {
-      const userObj = user.toObject();
-      return {
-        id: userObj._id.toString(),
-        ...userObj
-      };
-    });
-  }
-
-  async searchUsers(query: string): Promise<any[]> {
-    const users = await this.userModel.find({
-      $or: [
-        { name: { $regex: query, $options: 'i' } },
-        { email: { $regex: query, $options: 'i' } },
-        { phone: { $regex: query, $options: 'i' } }
-      ]
-    }).select('-password');
-
-    return users.map(user => {
-      const userObj = user.toObject();
-      return {
-        id: userObj._id.toString(),
-        ...userObj
-      };
-    });
-  }
-
-  // Helper method to generate mock JWT token
   private generateMockToken(user: any): string {
-    // In production, use proper JWT signing
-    const tokenPayload = {
-      userId: user._id.toString(),
-      email: user.email,
-      role: user.role,
-      iat: Date.now()
-    };
-
-    // For demo purposes, just return base64 encoded payload
-    return Buffer.from(JSON.stringify(tokenPayload)).toString('base64');
+    return `mock-jwt-${user._id}-${Date.now()}`;
   }
 }

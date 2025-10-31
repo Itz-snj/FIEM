@@ -1,6 +1,7 @@
 /**
  * Socket.io integration for real-time communication in ambulance booking system
  */
+import { Service } from "@tsed/di";
 import { Namespace, Server as SocketIOServer, Socket } from "socket.io";
 import { Coordinates, LocationPoint } from "../utils/LocationUtils.js";
 import { UserRole } from "../models/User.js";
@@ -50,24 +51,38 @@ export interface ChatMessage {
   messageType: 'text' | 'location' | 'image' | 'voice';
 }
 
+@Service()
 export class SocketService {
-  private io: SocketIOServer;
+  private io: SocketIOServer | null = null;
   private connectedUsers: Map<string, SocketUser> = new Map();
   private driverLocations: Map<string, DriverLocationUpdate> = new Map();
   
   // Namespaces for different types of communications
-  private driverNamespace: Namespace;
-  private userNamespace: Namespace;
-  private hospitalNamespace: Namespace;
-  private emergencyNamespace: Namespace;
+  private driverNamespace: Namespace | null = null;
+  private userNamespace: Namespace | null = null;
+  private hospitalNamespace: Namespace | null = null;
+  private emergencyNamespace: Namespace | null = null;
 
-  constructor(io: SocketIOServer) {
+  constructor() {
+    // Socket.io will be initialized later via setSocketIOServer method
+  }
+
+  /**
+   * Initialize the Socket.io server (called from external setup)
+   */
+  public setSocketIOServer(io: SocketIOServer) {
     this.io = io;
     this.setupNamespaces();
     this.setupEventHandlers();
+    console.log("Socket.io server initialized for SocketService");
   }
 
   private setupNamespaces() {
+    if (!this.io) {
+      console.warn("Socket.io server not initialized");
+      return;
+    }
+
     // Driver namespace for ambulance drivers
     this.driverNamespace = this.io.of('/drivers');
     this.driverNamespace.on('connection', (socket) => this.handleDriverConnection(socket));
@@ -86,6 +101,11 @@ export class SocketService {
   }
 
   private setupEventHandlers() {
+    if (!this.io) {
+      console.warn("Socket.io server not initialized");
+      return;
+    }
+
     this.io.on('connection', (socket) => {
       console.log(`Socket connected: ${socket.id}`);
       
@@ -227,7 +247,9 @@ export class SocketService {
     });
 
     // Broadcast to users tracking this driver
-    this.io.emit('driver:location_updated', data);
+    if (this.io) {
+      this.io.emit('driver:location_updated', data);
+    }
     
     // Notify relevant bookings
     this.notifyBookingsOfDriverLocation(data);
@@ -240,36 +262,52 @@ export class SocketService {
     }
 
     // Broadcast status change
-    this.io.emit('driver:status_changed', { driverId, status });
+    if (this.io) {
+      this.io.emit('driver:status_changed', { driverId, status });
+    }
     
     // Update emergency executives
-    this.emergencyNamespace.emit('driver:status_update', { driverId, status });
+    if (this.emergencyNamespace) {
+      this.emergencyNamespace.emit('driver:status_update', { driverId, status });
+    }
   }
 
   private handleBookingUpdate(update: BookingUpdate) {
     // Notify all parties involved in the booking
-    this.io.to(`booking:${update.bookingId}`).emit('booking:updated', update);
+    if (this.io) {
+      this.io.to(`booking:${update.bookingId}`).emit('booking:updated', update);
+    }
     
     // Notify emergency executives
-    this.emergencyNamespace.emit('booking:status_change', update);
+    if (this.emergencyNamespace) {
+      this.emergencyNamespace.emit('booking:status_change', update);
+    }
   }
 
   private broadcastEmergencyAlert(alert: EmergencyAlert) {
     // Send to all emergency executives
-    this.emergencyNamespace.emit('emergency:alert', alert);
+    if (this.emergencyNamespace) {
+      this.emergencyNamespace.emit('emergency:alert', alert);
+    }
     
     // Send to nearby drivers (TODO: implement geospatial filtering)
-    this.driverNamespace.emit('emergency:nearby_alert', alert);
+    if (this.driverNamespace) {
+      this.driverNamespace.emit('emergency:nearby_alert', alert);
+    }
     
     console.log(`Emergency alert broadcasted: ${alert.bookingId}`);
   }
 
   private broadcastHospitalCapacityUpdate(data: { hospitalId: string; availableBeds: number }) {
     // Notify all emergency executives
-    this.emergencyNamespace.emit('hospital:capacity_updated', data);
+    if (this.emergencyNamespace) {
+      this.emergencyNamespace.emit('hospital:capacity_updated', data);
+    }
     
     // Notify nearby drivers
-    this.driverNamespace.emit('hospital:capacity_updated', data);
+    if (this.driverNamespace) {
+      this.driverNamespace.emit('hospital:capacity_updated', data);
+    }
   }
 
   private notifyBookingsOfDriverLocation(driverUpdate: DriverLocationUpdate) {
@@ -307,7 +345,7 @@ export class SocketService {
   // Public methods for external use
   public sendMessageToUser(userId: string, event: string, data: any) {
     const user = this.connectedUsers.get(userId);
-    if (user && user.isOnline) {
+    if (user && user.isOnline && this.io) {
       this.io.to(user.socketId).emit(event, data);
       return true;
     }
@@ -315,15 +353,21 @@ export class SocketService {
   }
 
   public sendMessageToDriver(driverId: string, event: string, data: any) {
-    this.driverNamespace.to(`driver:${driverId}`).emit(event, data);
+    if (this.driverNamespace) {
+      this.driverNamespace.to(`driver:${driverId}`).emit(event, data);
+    }
   }
 
   public sendMessageToHospital(hospitalId: string, event: string, data: any) {
-    this.hospitalNamespace.to(`hospital:${hospitalId}`).emit(event, data);
+    if (this.hospitalNamespace) {
+      this.hospitalNamespace.to(`hospital:${hospitalId}`).emit(event, data);
+    }
   }
 
   public broadcastToEmergencyExecutives(event: string, data: any) {
-    this.emergencyNamespace.emit(event, data);
+    if (this.emergencyNamespace) {
+      this.emergencyNamespace.emit(event, data);
+    }
   }
 
   public getConnectedUsers(): SocketUser[] {
@@ -346,20 +390,26 @@ export class SocketService {
   // Chat functionality
   public sendChatMessage(message: ChatMessage) {
     // Send to all participants in the booking
-    this.io.to(`booking:${message.bookingId}`).emit('chat:message', message);
+    if (this.io) {
+      this.io.to(`booking:${message.bookingId}`).emit('chat:message', message);
+    }
   }
 
   public joinBookingRoom(socketId: string, bookingId: string) {
-    const socket = this.io.sockets.sockets.get(socketId);
-    if (socket) {
-      socket.join(`booking:${bookingId}`);
+    if (this.io) {
+      const socket = this.io.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.join(`booking:${bookingId}`);
+      }
     }
   }
 
   public leaveBookingRoom(socketId: string, bookingId: string) {
-    const socket = this.io.sockets.sockets.get(socketId);
-    if (socket) {
-      socket.leave(`booking:${bookingId}`);
+    if (this.io) {
+      const socket = this.io.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.leave(`booking:${bookingId}`);
+      }
     }
   }
 }

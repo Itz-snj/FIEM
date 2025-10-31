@@ -2,6 +2,7 @@ import { Service } from "@tsed/di";
 import { BadRequest, NotFound } from "@tsed/exceptions";
 import { LocationService } from "./LocationService.js";
 import { BookingService } from "./BookingService.js";
+import { WebSocketService } from "./WebSocketService.js";
 import { Priority, BookingType } from "../models/Booking.js";
 import { AmbulanceType, DriverStatus } from "../models/Driver.js";
 
@@ -64,6 +65,8 @@ export class SmartDispatchService {
     responseTime?: number;
     success: boolean;
   }> = [];
+
+  private socketService?: WebSocketService; // Optional to avoid circular dependencies
 
   constructor(
     private locationService: LocationService,
@@ -421,14 +424,38 @@ export class SmartDispatchService {
    * Notify stakeholders about dispatch
    */
   private async notifyDispatchStakeholders(bookingId: string, driver: DriverScore): Promise<void> {
-    // In real system, would:
-    // 1. Send push notification to driver
-    // 2. Send SMS to patient
-    // 3. Notify emergency executives
-    // 4. Update real-time dashboard
-    // 5. Log to analytics system
+    if (this.socketService) {
+      // 📱 1. Notify the assigned driver in real-time
+      this.socketService.sendMessageToDriver(driver.driverId, 'dispatch:new_booking_assigned', {
+        bookingId,
+        distance: driver.distance,
+        estimatedArrival: driver.estimatedArrival,
+        confidence: driver.score,
+        priority: 'high',
+        message: `New booking assigned! Distance: ${driver.distance.toFixed(1)}km, ETA: ${driver.estimatedArrival} minutes`
+      });
+
+      // 🚨 2. Notify emergency executives about successful dispatch
+      this.socketService.broadcastToEmergencyExecutives('dispatch:successful_assignment', {
+        bookingId,
+        driverId: driver.driverId,
+        distance: driver.distance,
+        confidence: driver.score,
+        dispatchTime: new Date(),
+        message: `Smart dispatch successful: Driver ${driver.driverId} assigned to booking ${bookingId}`
+      });
+
+      // 📊 3. Broadcast to real-time dashboard
+      this.socketService.broadcastToEmergencyExecutives('analytics:dispatch_update', {
+        bookingId,
+        driverId: driver.driverId,
+        responseTime: driver.estimatedArrival,
+        dispatchScore: driver.score,
+        timestamp: new Date()
+      });
+    }
     
-    console.log(`Dispatch notifications sent for booking ${bookingId} to driver ${driver.driverId}`);
+    console.log(`📡 Dispatch notifications sent for booking ${bookingId} to driver ${driver.driverId}`);
   }
 
   /**
@@ -516,7 +543,26 @@ export class SmartDispatchService {
       // Record manual dispatch
       this.recordDispatch(bookingId, driverId, true);
       
-      console.log(`Manual dispatch: ${bookingId} assigned to ${driverId}. Reason: ${overrideReason}`);
+      // 🔔 Emit real-time manual dispatch notification
+      if (this.socketService) {
+        this.socketService.broadcastToEmergencyExecutives('dispatch:manual_override', {
+          bookingId,
+          driverId,
+          overrideReason,
+          executedBy: 'emergency_executive', // Would come from auth context
+          timestamp: new Date(),
+          message: `Manual dispatch override: ${overrideReason}`
+        });
+
+        this.socketService.sendMessageToDriver(driverId, 'dispatch:manual_assignment', {
+          bookingId,
+          overrideReason,
+          priority: 'manual',
+          message: `Manual assignment by emergency executive: ${overrideReason}`
+        });
+      }
+
+      console.log(`📡 Manual dispatch: ${bookingId} assigned to ${driverId}. Reason: ${overrideReason}`);
 
       return {
         success: true,
@@ -536,5 +582,12 @@ export class SmartDispatchService {
         dispatchTime: new Date()
       };
     }
+  }
+
+  /**
+   * 🔔 Public method to set socket service (to avoid circular dependency)
+   */
+  public setSocketService(socketService: WebSocketService) {
+    this.socketService = socketService;
   }
 }

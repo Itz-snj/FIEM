@@ -22,6 +22,11 @@ try {
   const platform = await PlatformExpress.bootstrap(Server);
   await platform.listen();
 
+  $log.info("✅ Server started successfully");
+
+  // TODO: Initialize Socket.io after confirming basic server works
+  // const io = new SocketIOServer(httpServer, { ... });
+
   SIG_EVENTS.forEach((evt) => process.on(evt, () => platform.stop()));
 
   ["uncaughtException", "unhandledRejection"].forEach((evt) =>

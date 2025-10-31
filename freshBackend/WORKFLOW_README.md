@@ -231,6 +231,244 @@ graph TD
 
 ---
 
+## 🧪 Complete API Testing Workflow
+
+### **🚀 Step-by-Step Testing Commands**
+
+#### **1️⃣ Create Test Users**
+
+**Create Emergency User:**
+```bash
+curl -X POST http://localhost:8083/rest/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "John Emergency",
+    "phone": "+1234567890",
+    "email": "john@emergency.com",
+    "password": "password123",
+    "role": "user"
+  }'
+```
+
+**Create Driver User:**
+```bash
+curl -X POST http://localhost:8083/rest/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Driver Mike",
+    "phone": "+1234567891",
+    "email": "mike@driver.com", 
+    "password": "password123",
+    "role": "driver"
+  }'
+```
+
+**Create Hospital User:**
+```bash
+curl -X POST http://localhost:8083/rest/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "City Hospital",
+    "phone": "+1234567892",
+    "email": "admin@cityhospital.com",
+    "password": "password123", 
+    "role": "hospital"
+  }'
+```
+
+**Create Emergency Executive:**
+```bash
+curl -X POST http://localhost:8083/rest/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "Emergency Executive",
+    "phone": "+1234567893",
+    "email": "exec@emergency.com",
+    "password": "password123",
+    "role": "emergency_executive"
+  }'
+```
+
+#### **2️⃣ Verify All Users Created**
+
+**Get All Users by Role:**
+```bash
+# Get all users
+curl -X GET http://localhost:8083/rest/users/role/user
+
+# Get all drivers  
+curl -X GET http://localhost:8083/rest/users/role/driver
+
+# Get all hospitals
+curl -X GET http://localhost:8083/rest/users/role/hospital
+
+# Get all emergency executives
+curl -X GET http://localhost:8083/rest/users/role/emergency_executive
+```
+
+#### **3️⃣ Test User Authentication**
+
+**User Login:**
+```bash
+curl -X POST http://localhost:8083/rest/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@emergency.com",
+    "password": "password123"
+  }'
+```
+
+#### **4️⃣ Update Driver Location** *(Use actual driver ID from step 2)*
+
+```bash
+curl -X POST http://localhost:8083/rest/location/drivers/DRIVER_ID_HERE/update \
+  -H "Content-Type: application/json" \
+  -d '{
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)'",
+    "accuracy": 10,
+    "speed": 0,
+    "heading": 0
+  }'
+```
+
+#### **5️⃣ Set Driver Online Status**
+
+```bash
+curl -X POST http://localhost:8083/rest/drivers/DRIVER_ID_HERE/go-online \
+  -H "Content-Type: application/json" \
+  -d '{
+    "location": {
+      "latitude": 37.7749,
+      "longitude": -122.4194
+    }
+  }'
+```
+
+#### **6️⃣ Create Test Booking** *(Use actual user ID from step 2)*
+
+```bash
+curl -X POST http://localhost:8083/rest/bookings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "USER_ID_HERE",
+    "pickupLocation": {
+      "latitude": 37.7849,
+      "longitude": -122.4094,
+      "address": "123 Emergency St, San Francisco, CA"
+    },
+    "destinationLocation": {
+      "latitude": 37.7949, 
+      "longitude": -122.3994,
+      "address": "456 Hospital Ave, San Francisco, CA"
+    },
+    "patientInfo": {
+      "name": "Emergency Patient",
+      "age": 45,
+      "gender": "male",
+      "medicalCondition": "chest pain",
+      "severity": "high"
+    },
+    "emergencyContact": {
+      "name": "Jane Doe",
+      "phone": "+1234567894"
+    }
+  }'
+```
+
+#### **7️⃣ Test Emergency SOS** *(Use actual user ID from step 2)*
+
+```bash
+curl -X POST http://localhost:8083/rest/bookings/emergency/sos \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": "USER_ID_HERE",
+    "location": {
+      "latitude": 37.7749,
+      "longitude": -122.4194,
+      "address": "Emergency Location"
+    },
+    "emergencyType": "cardiac_arrest"
+  }'
+```
+
+#### **8️⃣ Find Nearest Hospitals**
+
+```bash
+curl -X POST http://localhost:8083/rest/location/hospitals/nearest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "radius": 10000,
+    "specializations": ["emergency", "cardiology"]
+  }'
+```
+
+#### **9️⃣ Find Nearest Drivers**
+
+```bash
+curl -X POST http://localhost:8083/rest/location/drivers/nearest \
+  -H "Content-Type: application/json" \
+  -d '{
+    "latitude": 37.7749,
+    "longitude": -122.4194,
+    "radius": 5000
+  }'
+```
+
+#### **🔟 Get Booking Status** *(Use actual booking ID from step 6)*
+
+```bash
+curl -X GET http://localhost:8083/rest/bookings/BOOKING_ID_HERE
+```
+
+#### **1️⃣1️⃣ Update Booking Status**
+
+```bash
+curl -X PUT http://localhost:8083/rest/bookings/BOOKING_ID_HERE/status \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "driver_assigned",
+    "driverId": "DRIVER_ID_HERE"
+  }'
+```
+
+#### **1️⃣2️⃣ Test Real-time Features**
+
+**Get Real-time Status:**
+```bash
+curl -X GET http://localhost:8083/rest/bookings/realtime/status
+```
+
+**Emergency Broadcast:**
+```bash
+curl -X POST http://localhost:8083/rest/bookings/realtime/emergency/broadcast \
+  -H "Content-Type: application/json" \
+  -d '{
+    "emergencyId": "BOOKING_ID_HERE",
+    "location": {
+      "latitude": 37.7749,
+      "longitude": -122.4194
+    },
+    "severity": "critical"
+  }'
+```
+
+### **✅ Expected Test Results**
+
+1. **User Registration**: Returns success with user ID
+2. **User Login**: Returns authentication token  
+3. **Location Updates**: Returns success confirmation
+4. **Booking Creation**: Returns booking ID and hospital recommendations
+5. **Emergency SOS**: Returns emergency booking ID and alert status
+6. **Nearest Searches**: Returns array of nearby drivers/hospitals
+7. **Status Updates**: Returns updated booking information
+8. **Real-time Features**: Returns active connection status
+
+---
+
 ## 🧪 Testing Strategy
 
 ### **🔍 Test Coverage**

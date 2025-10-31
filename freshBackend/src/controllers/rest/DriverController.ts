@@ -141,8 +141,22 @@ export class DriverController {
   @Returns(400, BadRequest)
   async goOnline(
     @PathParams("driverId") driverId: string,
-    @BodyParams() locationData: LocationPoint
+    @BodyParams() requestBody: { location?: LocationPoint } | LocationPoint
   ): Promise<{ success: boolean; message: string }> {
+    // Handle both nested {location: {...}} and direct location data
+    let locationData: LocationPoint;
+    
+    if ('location' in requestBody && requestBody.location) {
+      locationData = requestBody.location;
+    } else {
+      locationData = requestBody as LocationPoint;
+    }
+    
+    // Ensure we have valid location data
+    if (!locationData.latitude || !locationData.longitude) {
+      throw new BadRequest("Valid latitude and longitude are required");
+    }
+    
     await this.locationService.updateDriverLocation(driverId, locationData, DriverStatus.AVAILABLE);
     
     return {

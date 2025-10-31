@@ -4,6 +4,7 @@ import { BookingStatus, BookingType, Priority, PaymentStatus } from "../models/B
 import { DriverStatus, AmbulanceType } from "../models/Driver.js";
 import { LocationService } from "./LocationService.js";
 import { UserService } from "./UserService.js";
+import { WebSocketService } from "./WebSocketService.js";
 
 // Define interfaces locally to avoid import issues
 interface Coordinates {
@@ -122,6 +123,9 @@ export class BookingService {
   private bookings: Map<string, any> = new Map();
   private bookingCounter = 1000;
 
+  // Socket service will be injected later to avoid circular dependencies
+  private socketService?: WebSocketService;
+
   constructor(
     private locationService: LocationService,
     private userService: UserService
@@ -201,6 +205,16 @@ export class BookingService {
     // Store booking
     this.bookings.set(bookingId, booking);
 
+    // 🔔 Emit real-time booking created event
+    this.emitBookingEvent('booking:created', {
+      bookingId: booking._id,
+      userId: booking.userId,
+      status: booking.status,
+      priority: booking.priority,
+      location: booking.pickupLocation.coordinates,
+      message: `New booking ${booking.bookingNumber} created`
+    });
+
     // For emergency bookings, immediately try to dispatch
     if (bookingRequest.priority === Priority.CRITICAL || bookingRequest.type === BookingType.EMERGENCY) {
       // This would trigger the dispatch algorithm
@@ -259,6 +273,27 @@ export class BookingService {
       throw new NotFound("Booking not found");
     }
 
+    // If the requested status is the same as current, treat as idempotent no-op and return success
+    if (booking.status === status) {
+      // Update timestamp to reflect the request and optionally add a lightweight timeline entry
+      booking.updatedAt = new Date();
+      // Avoid stacking duplicate timeline entries for identical status updates
+      const lastTimeline = booking.timeline && booking.timeline.length ? booking.timeline[booking.timeline.length - 1] : null;
+      if (!lastTimeline || lastTimeline.status !== status) {
+        booking.timeline.push({ status, timestamp: new Date(), notes: 'Status reaffirmed (no-op)' });
+      }
+
+      // Emit update for clients (keeps behavior consistent)
+      this.emitBookingUpdate(bookingId, status, {
+        location: updateData?.location,
+        estimatedArrival: updateData?.estimatedArrival,
+        notes: updateData?.notes,
+        message: `Booking ${booking.bookingNumber} status reaffirmed as ${status}`
+      });
+
+      return booking;
+    }
+
     // Validate status transition
     if (!this.isValidStatusTransition(booking.status, status)) {
       throw new BadRequest(`Invalid status transition from ${booking.status} to ${status}`);
@@ -288,6 +323,14 @@ export class BookingService {
 
     // Handle special status updates
     await this.handleStatusSpecificUpdates(booking, status, updateData);
+
+    // 🔔 Emit real-time booking status update
+    this.emitBookingUpdate(bookingId, status, {
+      location: updateData?.location,
+      estimatedArrival: updateData?.estimatedArrival,
+      notes: updateData?.notes,
+      message: `Booking ${booking.bookingNumber} status updated to ${status}`
+    });
 
     console.log(`Booking ${booking.bookingNumber} status updated to ${status}`);
     return booking;
@@ -344,6 +387,32 @@ export class BookingService {
       driverLocation.location, 
       DriverStatus.BUSY
     );
+
+    // 🔔 Emit real-time driver assignment notification
+    this.emitBookingEvent('booking:driver_assigned', {
+      bookingId: booking._id,
+      userId: booking.userId,
+      driverId: driverDetails.driverId,
+      driverName: driverDetails.name,
+      driverPhone: driverDetails.phone,
+      vehicleNumber: driverDetails.vehicleNumber,
+      estimatedArrival: estimatedArrival,
+      driverLocation: driverLocation.location,
+      message: `Driver ${driverDetails.name} has been assigned to your booking`
+    });
+
+    // Notify the driver about the new booking
+    if (this.socketService) {
+      this.socketService.sendMessageToDriver(driverId, 'booking:assigned_to_you', {
+        bookingId: booking._id,
+        bookingNumber: booking.bookingNumber,
+        pickupLocation: booking.pickupLocation,
+        patientInfo: booking.patientInfo,
+        priority: booking.priority,
+        estimatedDistance: distance,
+        message: `New booking assigned: ${booking.bookingNumber}`
+      });
+    }
 
     console.log(`Driver ${driverId} assigned to booking ${booking.bookingNumber}`);
     return booking;
@@ -688,5 +757,63 @@ export class BookingService {
     demoBookings.forEach(booking => {
       this.bookings.set(booking._id, booking);
     });
+  }
+
+  /**
+   * 📡 Real-time event emission helpers
+   */
+  private emitBookingEvent(eventType: string, data: any) {
+    if (this.socketService) {
+      // Notify the specific user
+      if (data.userId) {
+        this.socketService.sendMessageToUser(data.userId, eventType, data);
+      }
+      
+      // Notify emergency executives for high priority bookings
+      if (data.priority === Priority.CRITICAL || data.priority === Priority.HIGH) {
+        this.socketService.broadcastToEmergencyExecutives(eventType, data);
+      }
+
+      // Broadcast to relevant drivers for CRITICAL emergencies
+      if (data.priority === Priority.CRITICAL) {
+        this.socketService.sendMessageToDriver('*', 'emergency:new_booking', data);
+      }
+
+      console.log(`📡 Real-time event emitted: ${eventType} for booking ${data.bookingId}`);
+    }
+  }
+
+  private emitBookingUpdate(bookingId: string, status: BookingStatus, additionalData?: any) {
+    const booking = this.bookings.get(bookingId);
+    if (booking && this.socketService) {
+      const updateData = {
+        bookingId,
+        status,
+        userId: booking.userId,
+        assignedDriver: booking.assignedDriver,
+        location: booking.currentLocation,
+        timestamp: new Date(),
+        ...additionalData
+      };
+
+      // Emit to all stakeholders
+      this.emitBookingEvent('booking:status_updated', updateData);
+      
+      // If driver is assigned, notify them specifically
+      if (booking.assignedDriver) {
+        this.socketService.sendMessageToDriver(
+          booking.assignedDriver.driverId, 
+          'booking:status_updated', 
+          updateData
+        );
+      }
+    }
+  }
+
+  /**
+   * 🔔 Public method to set socket service (to avoid circular dependency)
+   */
+  public setSocketService(socketService: WebSocketService) {
+    this.socketService = socketService;
   }
 }
