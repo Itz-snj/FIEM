@@ -459,70 +459,320 @@ export class SmartDispatchService {
   }
 
   /**
-   * Get dispatch analytics
+   * Get comprehensive dispatch analytics and performance metrics
    */
-  async getDispatchAnalytics(timeframe: 'hour' | 'day' | 'week' | 'month' = 'day'): Promise<{
-    totalDispatches: number;
-    successRate: number;
-    averageResponseTime: number;
-    topPerformingDrivers: string[];
-    dispatchByHour: number[];
-  }> {
-    const now = new Date();
-    let startTime: Date;
+  async getDispatchAnalytics(): Promise<any> {
+    const recentDispatches = this.dispatchHistory.slice(-100);
+    const allTimeDispatches = this.dispatchHistory;
     
-    switch (timeframe) {
-      case 'hour':
-        startTime = new Date(now.getTime() - 60 * 60 * 1000);
-        break;
-      case 'day':
-        startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        break;
-      case 'week':
-        startTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        break;
-      case 'month':
-        startTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        break;
+    if (allTimeDispatches.length === 0) {
+      return {
+        summary: {
+          totalDispatches: 0,
+          successRate: 0,
+          averageResponseTime: 0,
+          totalDriversUsed: 0
+        },
+        performance: {
+          topPerformingDrivers: [],
+          dispatchByHour: new Array(24).fill(0),
+          responseTimeDistribution: [],
+          successTrends: []
+        },
+        insights: {
+          peakHours: [],
+          averageResponseByHour: new Array(24).fill(0),
+          emergencyVsRegular: { emergency: 0, regular: 0 },
+          geographicDistribution: []
+        }
+      };
     }
 
-    const recentDispatches = this.dispatchHistory.filter(d => d.dispatchTime >= startTime);
+    // 📊 BASIC SUMMARY METRICS
+    const successfulDispatches = allTimeDispatches.filter(d => d.success);
+    const totalDispatches = allTimeDispatches.length;
+    const successRate = (successfulDispatches.length / totalDispatches) * 100;
     
-    const totalDispatches = recentDispatches.length;
-    const successfulDispatches = recentDispatches.filter(d => d.success).length;
-    const successRate = totalDispatches > 0 ? successfulDispatches / totalDispatches : 0;
-    
-    // Calculate average response time
-    const responseTimes = recentDispatches
-      .filter(d => d.responseTime)
-      .map(d => d.responseTime!);
+    const responseTimes = successfulDispatches.map(d => d.responseTime || 0).filter(t => t > 0);
     const averageResponseTime = responseTimes.length > 0 ? 
       responseTimes.reduce((sum, time) => sum + time, 0) / responseTimes.length : 0;
 
-    // Top performing drivers
-    const driverCounts = recentDispatches.reduce((acc, d) => {
-      acc[d.driverId] = (acc[d.driverId] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-    
-    const topPerformingDrivers = Object.entries(driverCounts)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5)
-      .map(([driverId]) => driverId);
+    const uniqueDrivers = new Set(allTimeDispatches.map(d => d.driverId)).size;
 
-    // Dispatch by hour (for daily patterns)
+    // 🏆 PERFORMANCE ANALYTICS
+    const driverPerformance = this.calculateDriverPerformance(allTimeDispatches);
+    const topPerformingDrivers = driverPerformance.slice(0, 10);
+
+    // Dispatch patterns by hour
     const dispatchByHour = new Array(24).fill(0);
-    recentDispatches.forEach(d => {
+    const responseTimeByHour = new Array(24).fill(0);
+    const hourlyCount = new Array(24).fill(0);
+
+    allTimeDispatches.forEach(d => {
       const hour = d.dispatchTime.getHours();
       dispatchByHour[hour]++;
+      if (d.success && d.responseTime) {
+        responseTimeByHour[hour] += d.responseTime;
+        hourlyCount[hour]++;
+      }
     });
 
+    // Calculate average response time by hour
+    const averageResponseByHour = responseTimeByHour.map((total, hour) => 
+      hourlyCount[hour] > 0 ? Math.round(total / hourlyCount[hour]) : 0
+    );
+
+    // 🔍 ADVANCED INSIGHTS
+    const peakHours = dispatchByHour
+      .map((count, hour) => ({ hour, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5)
+      .map(({ hour, count }) => ({ 
+        hour: `${hour}:00-${hour + 1}:00`, 
+        dispatches: count,
+        percentage: Math.round((count / totalDispatches) * 100)
+      }));
+
+    // Response time distribution
+    const responseTimeDistribution = this.createResponseTimeDistribution(responseTimes);
+
+    // Emergency vs Regular breakdown (mock categorization for demo)
+    const emergencyDispatches = allTimeDispatches.filter((d, index) => index % 3 === 0); // Every 3rd dispatch as emergency (demo)
+    const regularDispatches = allTimeDispatches.filter((d, index) => index % 3 !== 0);
+
+    // Success trends (last 30 dispatches in groups of 10)
+    const successTrends = this.calculateSuccessTrends(allTimeDispatches);
+
+    // Geographic distribution (mock data based on dispatch locations)
+    const geographicDistribution = this.analyzeGeographicDistribution(allTimeDispatches);
+
     return {
-      totalDispatches,
-      successRate,
-      averageResponseTime,
-      topPerformingDrivers,
-      dispatchByHour
+      summary: {
+        totalDispatches,
+        successRate: Math.round(successRate * 100) / 100,
+        averageResponseTime: Math.round(averageResponseTime),
+        totalDriversUsed: uniqueDrivers,
+        recentActivity: recentDispatches.length
+      },
+      performance: {
+        topPerformingDrivers,
+        dispatchByHour,
+        responseTimeDistribution,
+        successTrends,
+        averageResponseByHour
+      },
+      insights: {
+        peakHours,
+        emergencyVsRegular: {
+          emergency: {
+            count: emergencyDispatches.length,
+            successRate: emergencyDispatches.length > 0 ? 
+              Math.round((emergencyDispatches.filter(d => d.success).length / emergencyDispatches.length) * 100) : 0,
+            avgResponseTime: this.calculateAverageResponseTime(emergencyDispatches)
+          },
+          regular: {
+            count: regularDispatches.length,
+            successRate: regularDispatches.length > 0 ? 
+              Math.round((regularDispatches.filter(d => d.success).length / regularDispatches.length) * 100) : 0,
+            avgResponseTime: this.calculateAverageResponseTime(regularDispatches)
+          }
+        },
+        geographicDistribution,
+        performanceScore: this.calculateOverallPerformanceScore(successRate, averageResponseTime, totalDispatches)
+      }
+    };
+  }
+
+  /**
+   * Calculate detailed driver performance metrics
+   */
+  private calculateDriverPerformance(dispatches: any[]) {
+    const driverStats = new Map();
+
+    dispatches.forEach(dispatch => {
+      if (!driverStats.has(dispatch.driverId)) {
+        driverStats.set(dispatch.driverId, {
+          driverId: dispatch.driverId,
+          totalDispatches: 0,
+          successfulDispatches: 0,
+          totalResponseTime: 0,
+          emergencyDispatches: 0,
+          recentActivity: 0
+        });
+      }
+
+      const stats = driverStats.get(dispatch.driverId);
+      stats.totalDispatches++;
+      
+      if (dispatch.successful) {
+        stats.successfulDispatches++;
+        if (dispatch.responseTime) {
+          stats.totalResponseTime += dispatch.responseTime;
+        }
+      }
+
+      // Mock emergency classification for demo (every 3rd dispatch)
+      if (dispatches.indexOf(dispatch) % 3 === 0) {
+        stats.emergencyDispatches++;
+      }
+
+      // Check if dispatch was in last 7 days
+      if (Date.now() - dispatch.dispatchTime.getTime() < 7 * 24 * 60 * 60 * 1000) {
+        stats.recentActivity++;
+      }
+    });
+
+    return Array.from(driverStats.values()).map(stats => ({
+      driverId: stats.driverId,
+      totalDispatches: stats.totalDispatches,
+      successRate: Math.round((stats.successfulDispatches / stats.totalDispatches) * 100),
+      averageResponseTime: stats.successfulDispatches > 0 ? 
+        Math.round(stats.totalResponseTime / stats.successfulDispatches) : 0,
+      emergencyHandling: Math.round((stats.emergencyDispatches / stats.totalDispatches) * 100),
+      recentActivity: stats.recentActivity,
+      performanceScore: this.calculateDriverPerformanceScore(stats)
+    })).sort((a, b) => b.performanceScore - a.performanceScore);
+  }
+
+  /**
+   * Calculate individual driver performance score
+   */
+  private calculateDriverPerformanceScore(stats: any): number {
+    let score = 0;
+    
+    // Success rate (40% weight)
+    score += (stats.successfulDispatches / stats.totalDispatches) * 40;
+    
+    // Response time (30% weight) - lower is better
+    const avgResponse = stats.successfulDispatches > 0 ? stats.totalResponseTime / stats.successfulDispatches : 1000;
+    const responseScore = Math.max(0, (600 - avgResponse) / 600) * 30; // 600 seconds = 10 minutes baseline
+    score += responseScore;
+    
+    // Emergency handling (20% weight)
+    score += (stats.emergencyDispatches / stats.totalDispatches) * 20;
+    
+    // Recent activity (10% weight)
+    const activityScore = Math.min(stats.recentActivity / 10, 1) * 10; // Up to 10 recent dispatches = full score
+    score += activityScore;
+    
+    return Math.round(score * 100) / 100;
+  }
+
+  /**
+   * Create response time distribution for analysis
+   */
+  private createResponseTimeDistribution(responseTimes: number[]) {
+    const buckets = [
+      { label: '< 5 min', min: 0, max: 300, count: 0 },
+      { label: '5-10 min', min: 300, max: 600, count: 0 },
+      { label: '10-15 min', min: 600, max: 900, count: 0 },
+      { label: '15-20 min', min: 900, max: 1200, count: 0 },
+      { label: '> 20 min', min: 1200, max: Infinity, count: 0 }
+    ];
+
+    responseTimes.forEach(time => {
+      const bucket = buckets.find(b => time >= b.min && time < b.max);
+      if (bucket) bucket.count++;
+    });
+
+    const total = responseTimes.length;
+    return buckets.map(bucket => ({
+      ...bucket,
+      percentage: total > 0 ? Math.round((bucket.count / total) * 100) : 0
+    }));
+  }
+
+  /**
+   * Calculate success trends over time
+   */
+  private calculateSuccessTrends(dispatches: any[]) {
+    const groupSize = 10;
+    const trends = [];
+    
+    for (let i = dispatches.length - 1; i >= 0; i -= groupSize) {
+      const group = dispatches.slice(Math.max(0, i - groupSize + 1), i + 1);
+      if (group.length >= 5) { // Only analyze groups with enough data
+        const successful = group.filter(d => d.success).length;
+        const successRate = Math.round((successful / group.length) * 100);
+        trends.unshift({
+          period: `Dispatches ${Math.max(0, i - groupSize + 2)}-${i + 1}`,
+          successRate,
+          totalDispatches: group.length
+        });
+      }
+    }
+    
+    return trends.slice(-6); // Last 6 trend periods
+  }
+
+  /**
+   * Analyze geographic distribution of dispatches
+   */
+  private analyzeGeographicDistribution(dispatches: any[]) {
+    // Mock geographic analysis - in real implementation, this would use actual coordinates
+    const areas = ['Downtown', 'Suburbs', 'Medical District', 'Airport', 'University Area'];
+    const distribution = areas.map(area => ({
+      area,
+      dispatches: Math.floor(Math.random() * dispatches.length * 0.3),
+      averageResponseTime: Math.floor(Math.random() * 600 + 300) // 5-15 minutes
+    }));
+
+    // Normalize to actual dispatch count
+    const totalMock = distribution.reduce((sum, d) => sum + d.dispatches, 0);
+    const actualTotal = dispatches.length;
+    
+    return distribution.map(d => ({
+      ...d,
+      dispatches: Math.floor((d.dispatches / totalMock) * actualTotal),
+      percentage: Math.round(((d.dispatches / totalMock) * 100))
+    }));
+  }
+
+  /**
+   * Calculate average response time for a set of dispatches
+   */
+  private calculateAverageResponseTime(dispatches: any[]): number {
+    const successfulWithTime = dispatches.filter(d => d.success && d.responseTime);
+    if (successfulWithTime.length === 0) return 0;
+    
+    const total = successfulWithTime.reduce((sum, d) => sum + d.responseTime, 0);
+    return Math.round(total / successfulWithTime.length);
+  }
+
+  /**
+   * Calculate overall performance score for the system
+   */
+  private calculateOverallPerformanceScore(successRate: number, avgResponseTime: number, totalDispatches: number): any {
+    let score = 0;
+    
+    // Success rate component (50% weight)
+    score += (successRate / 100) * 50;
+    
+    // Response time component (40% weight) - lower is better
+    const responseScore = Math.max(0, (600 - avgResponseTime) / 600) * 40;
+    score += responseScore;
+    
+    // Volume component (10% weight) - more dispatches handled = better
+    const volumeScore = Math.min(totalDispatches / 100, 1) * 10;
+    score += volumeScore;
+    
+    let grade = 'F';
+    if (score >= 90) grade = 'A+';
+    else if (score >= 85) grade = 'A';
+    else if (score >= 80) grade = 'B+';
+    else if (score >= 75) grade = 'B';
+    else if (score >= 70) grade = 'C+';
+    else if (score >= 65) grade = 'C';
+    else if (score >= 60) grade = 'D';
+
+    return {
+      score: Math.round(score * 100) / 100,
+      grade,
+      factors: {
+        successRate: Math.round(successRate * 100) / 100,
+        responseTime: Math.round(avgResponseTime),
+        volume: totalDispatches
+      }
     };
   }
 

@@ -350,12 +350,12 @@ export class LocationService {
       this.driverLocations.set(driver.id, locationUpdate);
     });
 
-    // Add demo hospitals
+    // Add demo hospitals - Initialize hospitalLocations Map
     const demoHospitals: NearestHospitalResult[] = [
       {
         hospitalId: 'hosp1',
-        hospital: { name: 'City General Hospital' },
-        location: { latitude: 28.5672, longitude: 77.2100 },
+        hospital: { name: 'City General Hospital', address: '123 Medical District, San Francisco, CA' },
+        location: { latitude: 37.7849, longitude: -122.4094 },
         distance: 0,
         estimatedArrival: 0,
         availableBeds: 50,
@@ -364,8 +364,8 @@ export class LocationService {
       },
       {
         hospitalId: 'hosp2',
-        hospital: { name: 'Emergency Medical Center' },
-        location: { latitude: 28.5706, longitude: 77.2091 },
+        hospital: { name: 'Emergency Medical Center', address: '456 Health Ave, San Francisco, CA' },
+        location: { latitude: 37.7949, longitude: -122.3994 },
         distance: 0,
         estimatedArrival: 0,
         availableBeds: 30,
@@ -374,8 +374,8 @@ export class LocationService {
       },
       {
         hospitalId: 'hosp3',
-        hospital: { name: 'Cardiac Specialty Hospital' },
-        location: { latitude: 28.5244, longitude: 77.2066 },
+        hospital: { name: 'Cardiac Specialty Hospital', address: '789 Heart Center Dr, San Francisco, CA' },
+        location: { latitude: 37.7649, longitude: -122.4194 },
         distance: 0,
         estimatedArrival: 0,
         availableBeds: 25,
@@ -384,8 +384,8 @@ export class LocationService {
       },
       {
         hospitalId: 'hosp4',
-        hospital: { name: 'Trauma Center' },
-        location: { latitude: 28.6304, longitude: 77.2177 },
+        hospital: { name: 'Trauma Center', address: '321 Emergency Blvd, San Francisco, CA' },
+        location: { latitude: 37.8049, longitude: -122.3894 },
         distance: 0,
         estimatedArrival: 0,
         availableBeds: 40,
@@ -394,8 +394,8 @@ export class LocationService {
       },
       {
         hospitalId: 'hosp5',
-        hospital: { name: 'University Medical Center' },
-        location: { latitude: 28.6448, longitude: 77.2167 },
+        hospital: { name: 'University Medical Center', address: '654 University St, San Francisco, CA' },
+        location: { latitude: 37.7749, longitude: -122.4294 },
         distance: 0,
         estimatedArrival: 0,
         availableBeds: 35,

@@ -129,13 +129,55 @@ export class WebSocketService {
     this.connectedUsers.delete(userId);
   }
 
+  /**
+   * 📍 Enhanced Driver Location Update (Phase 4)
+   * Updates and broadcasts driver location with intelligent routing
+   */
   public updateDriverLocation(update: DriverLocationUpdate): void {
+    // Store location update
     this.driverLocations.set(update.driverId, update);
     
-    // Broadcast location update
-    if (this.io) {
-      this.io.emit('driver:location_updated', update);
+    // 🔄 Comprehensive location broadcasting
+    this.broadcastLocationUpdate(update);
+  }
+
+  /**
+   * 📡 Intelligent Location Broadcasting
+   * Broadcasts location updates to relevant audiences only
+   */
+  private broadcastLocationUpdate(update: DriverLocationUpdate): void {
+    if (!this.io) return;
+
+    // 1. Broadcast to driver namespace (other drivers, dispatchers)
+    if (this.driverNamespace) {
+      this.driverNamespace.emit('driver:location_updated', {
+        driverId: update.driverId,
+        location: update.location,
+        status: update.status,
+        timestamp: update.location.timestamp || new Date()
+      });
     }
+
+    // 2. Broadcast to emergency executives for fleet monitoring
+    if (this.emergencyNamespace) {
+      this.emergencyNamespace.emit('fleet:location_update', {
+        driverId: update.driverId,
+        location: update.location,
+        status: update.status,
+        speed: update.speed,
+        heading: update.heading
+      });
+    }
+
+    // 3. General location update (for tracking purposes)
+    this.io.emit('driver:location_live', {
+      driverId: update.driverId,
+      latitude: update.location.latitude,
+      longitude: update.location.longitude,
+      timestamp: update.location.timestamp || new Date()
+    });
+
+    console.log(`📍 Location update broadcasted for driver: ${update.driverId}`);
   }
 
   public broadcastEmergencyAlert(alert: any): void {
@@ -152,13 +194,94 @@ export class WebSocketService {
     console.log(`Emergency alert broadcasted: ${alert.bookingId}`);
   }
 
-  public broadcastHospitalCapacityUpdate(data: { hospitalId: string; availableBeds: number }): void {
+  /**
+   * 🏥 Enhanced Hospital Capacity Broadcasting (Phase 4)
+   * Intelligent capacity updates with audience-specific data
+   */
+  public broadcastHospitalCapacityUpdate(data: { 
+    hospitalId: string; 
+    availableBeds: number;
+    totalBeds?: number;
+    occupancyRate?: number;
+    status?: string;
+    waitTime?: number;
+    specialtyUnits?: any;
+    timestamp?: Date;
+  }): void {
+    const enhancedData = {
+      ...data,
+      timestamp: data.timestamp || new Date(),
+      broadcastId: `cap_${Date.now()}`
+    };
+
+    // 🚨 Broadcast to emergency executives with full details
     if (this.emergencyNamespace) {
-      this.emergencyNamespace.emit('hospital:capacity_updated', data);
+      this.emergencyNamespace.emit('hospital:capacity_critical_update', {
+        ...enhancedData,
+        urgencyLevel: this.calculateUrgencyLevel(data.availableBeds, data.totalBeds),
+        recommendedAction: this.getRecommendedAction(data.status)
+      });
     }
     
+    // 🚑 Broadcast to drivers with route-relevant info
     if (this.driverNamespace) {
-      this.driverNamespace.emit('hospital:capacity_updated', data);
+      this.driverNamespace.emit('hospital:routing_update', {
+        hospitalId: data.hospitalId,
+        availableBeds: data.availableBeds,
+        status: data.status,
+        waitTime: data.waitTime,
+        acceptingPatients: (data.availableBeds || 0) > 0,
+        timestamp: enhancedData.timestamp
+      });
     }
+
+    // 🏥 Broadcast to other hospitals for network coordination
+    if (this.hospitalNamespace) {
+      this.hospitalNamespace.emit('hospital:network_capacity', {
+        hospitalId: data.hospitalId,
+        availableBeds: data.availableBeds,
+        occupancyRate: data.occupancyRate,
+        status: data.status,
+        timestamp: enhancedData.timestamp
+      });
+    }
+
+    // 👥 Broadcast to users with active bookings (general availability)
+    if (this.userNamespace) {
+      this.userNamespace.emit('hospital:availability_update', {
+        hospitalId: data.hospitalId,
+        isAvailable: (data.availableBeds || 0) > 0,
+        status: data.status,
+        estimatedWait: data.waitTime
+      });
+    }
+
+    console.log(`🏥 Enhanced capacity update broadcasted for ${data.hospitalId}: ${data.availableBeds} beds available`);
+  }
+
+  /**
+   * Calculate urgency level for emergency executives
+   */
+  private calculateUrgencyLevel(availableBeds: number, totalBeds?: number): 'low' | 'medium' | 'high' | 'critical' {
+    if (!totalBeds || totalBeds === 0) return 'medium';
+    
+    const occupancyRate = ((totalBeds - availableBeds) / totalBeds) * 100;
+    
+    if (occupancyRate >= 98) return 'critical';
+    if (occupancyRate >= 90) return 'high';
+    if (occupancyRate >= 75) return 'medium';
+    return 'low';
+  }
+
+  /**
+   * Get recommended action based on hospital status
+   */
+  private getRecommendedAction(status?: string): string {
+    const actions = {
+      'critical': 'Consider diverting non-critical cases to other hospitals',
+      'busy': 'Monitor closely and prepare backup plans',
+      'normal': 'Normal operations - continue monitoring'
+    };
+    return actions[status as keyof typeof actions] || 'Continue standard protocols';
   }
 }

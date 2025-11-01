@@ -54,9 +54,17 @@ export class Booking {
 
   @Property()
   @Ref(User)
-  @Required()
-  @Description("Patient or person requesting ambulance")
-  userId: Ref<User>;
+  @Description("Patient or person requesting ambulance (optional for emergency SOS)")
+  userId?: Ref<User>;
+
+  @Property()
+  @Description("Emergency caller information (for anonymous emergency calls)")
+  emergencyCaller?: {
+    temporaryId: string;
+    name?: string;
+    phone?: string;
+    location: string;
+  };
 
   @Property()
   @Ref(Driver)
@@ -260,7 +268,7 @@ export class Booking {
     appVersion?: string;
     ipAddress?: string;
     userAgent?: string;
-    bookingSource?: string; // app, web, call, emergency_executive
+    bookingSource?: string; 
   };
 
   @Property()

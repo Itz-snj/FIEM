@@ -1,10 +1,13 @@
 import { Service } from "@tsed/di";
 import { BadRequest, NotFound, Unauthorized } from "@tsed/exceptions";
-import { BookingStatus, BookingType, Priority, PaymentStatus } from "../models/Booking.js";
+import { Model } from "@tsed/mongoose";
+import { Inject } from "@tsed/di";
+import { Booking, BookingStatus, BookingType, Priority, PaymentStatus } from "../models/Booking.js";
 import { DriverStatus, AmbulanceType } from "../models/Driver.js";
 import { LocationService } from "./LocationService.js";
 import { UserService } from "./UserService.js";
 import { WebSocketService } from "./WebSocketService.js";
+import type { Model as MongooseModelType } from "mongoose";
 
 // Define interfaces locally to avoid import issues
 interface Coordinates {
@@ -119,12 +122,15 @@ export interface BookingUpdate {
 
 @Service()
 export class BookingService {
-  // In-memory storage for demo purposes
+  // In-memory storage for demo purposes + Database storage
   private bookings: Map<string, any> = new Map();
   private bookingCounter = 1000;
 
   // Socket service will be injected later to avoid circular dependencies
   private socketService?: WebSocketService;
+
+  @Inject(Booking)
+  private bookingModel: MongooseModelType<Booking>;
 
   constructor(
     private locationService: LocationService,
@@ -137,10 +143,29 @@ export class BookingService {
    * Create a new ambulance booking
    */
   async createBooking(bookingRequest: BookingRequest): Promise<BookingResponse> {
-    // Validate user exists
-    const user = await this.userService.getUserById(bookingRequest.userId);
-    if (!user) {
-      throw new BadRequest("Invalid user ID");
+    let user = null;
+    let isEmergencyBooking = false;
+
+    console.log('🔍 BookingService.createBooking - Request data:', {
+      userId: bookingRequest.userId,
+      type: bookingRequest.type,
+      typeIsEmergency: bookingRequest.type === BookingType.EMERGENCY,
+      typeUpperCaseCheck: bookingRequest.type?.toLowerCase() === 'emergency',
+      userIdStartsWithEmergency: bookingRequest.userId?.startsWith('emergency-')
+    });
+
+    // For emergency bookings, allow anonymous users (handle both uppercase and lowercase)
+    if ((bookingRequest.type === BookingType.EMERGENCY || bookingRequest.type?.toLowerCase() === 'emergency') && 
+        bookingRequest.userId?.startsWith('emergency-')) {
+      isEmergencyBooking = true;
+      console.log('✅ Creating emergency booking for anonymous user:', bookingRequest.userId);
+    } else {
+      console.log('📞 Validating user exists for regular booking:', bookingRequest.userId);
+      // Validate user exists for regular bookings
+      user = await this.userService.getUserById(bookingRequest.userId);
+      if (!user) {
+        throw new BadRequest("Invalid user ID");
+      }
     }
 
     // Validate pickup location
@@ -171,10 +196,18 @@ export class BookingService {
     }];
 
     // Create booking object
-    const booking = {
-      _id: bookingId,
+    const bookingData = {
       bookingNumber,
-      userId: bookingRequest.userId,
+      ...(isEmergencyBooking ? {
+        emergencyCaller: {
+          temporaryId: bookingRequest.userId,
+          name: bookingRequest.patientInfo.name,
+          phone: bookingRequest.patientInfo.emergencyContact.phone,
+          location: bookingRequest.pickupLocation.address
+        }
+      } : {
+        userId: bookingRequest.userId
+      }),
       type: bookingRequest.type,
       priority: bookingRequest.priority,
       status: BookingStatus.REQUESTED,
@@ -197,28 +230,44 @@ export class BookingService {
         status: PaymentStatus.PENDING,
         breakdown: costBreakdown
       },
-      timeline,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      timeline
     };
 
-    // Store booking
-    this.bookings.set(bookingId, booking);
+    // 💾 Save to MongoDB database
+    let savedBooking;
+    try {
+      savedBooking = await this.bookingModel.create(bookingData);
+      console.log('✅ Booking saved to database:', savedBooking._id);
+    } catch (dbError) {
+      console.error('❌ Database save failed:', dbError);
+      // Fall back to in-memory storage for demo
+      const fallbackBooking = {
+        _id: bookingId,
+        ...bookingData,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      this.bookings.set(bookingId, fallbackBooking);
+      savedBooking = fallbackBooking;
+    }
+
+    // Also store in memory for quick access (can be removed in production)
+    this.bookings.set(savedBooking._id, savedBooking);
 
     // 🔔 Emit real-time booking created event
     this.emitBookingEvent('booking:created', {
-      bookingId: booking._id,
-      userId: booking.userId,
-      status: booking.status,
-      priority: booking.priority,
-      location: booking.pickupLocation.coordinates,
-      message: `New booking ${booking.bookingNumber} created`
+      bookingId: savedBooking._id,
+      userId: isEmergencyBooking ? bookingRequest.userId : bookingRequest.userId,
+      status: savedBooking.status,
+      priority: savedBooking.priority,
+      location: savedBooking.pickupLocation.coordinates,
+      message: `New booking ${savedBooking.bookingNumber} created`
     });
 
     // For emergency bookings, immediately try to dispatch
     if (bookingRequest.priority === Priority.CRITICAL || bookingRequest.type === BookingType.EMERGENCY) {
       // This would trigger the dispatch algorithm
-      setTimeout(() => this.autoDispatchEmergencyBooking(bookingId), 1000);
+      setTimeout(() => this.autoDispatchEmergencyBooking(savedBooking._id), 1000);
     }
 
     // Find recommended hospital
@@ -228,20 +277,20 @@ export class BookingService {
     );
 
     const response: BookingResponse = {
-      bookingId,
-      bookingNumber,
-      status: BookingStatus.REQUESTED,
+      bookingId: savedBooking._id,
+      bookingNumber: savedBooking.bookingNumber,
+      status: savedBooking.status,
       recommendedHospital,
       payment: {
-        amount: costBreakdown.total,
-        currency: 'INR',
-        status: PaymentStatus.PENDING,
+        amount: savedBooking.payment.amount,
+        currency: savedBooking.payment.currency,
+        status: savedBooking.payment.status,
         breakdown: costBreakdown
       },
-      timeline
+      timeline: savedBooking.timeline
     };
 
-    console.log(`New booking created: ${bookingNumber} for user ${bookingRequest.userId}`);
+    console.log(`✅ New booking created in database: ${savedBooking.bookingNumber} for user ${bookingRequest.userId}`);
     return response;
   }
 
@@ -249,10 +298,23 @@ export class BookingService {
    * Get booking by ID
    */
   async getBooking(bookingId: string): Promise<any> {
+    try {
+      // 💾 Try to fetch from MongoDB database first
+      const dbBooking = await this.bookingModel.findById(bookingId).exec();
+      if (dbBooking) {
+        console.log(`✅ Retrieved booking ${bookingId} from database`);
+        return dbBooking;
+      }
+    } catch (dbError) {
+      console.error('❌ Database query failed, trying in-memory:', dbError);
+    }
+
+    // 🗂️ Fallback to in-memory storage
     const booking = this.bookings.get(bookingId);
     if (!booking) {
       throw new NotFound("Booking not found");
     }
+    console.log(`📋 Retrieved booking ${bookingId} from in-memory storage`);
     return booking;
   }
 
@@ -507,6 +569,48 @@ export class BookingService {
     endDate?: Date;
     limit?: number;
   } = {}): Promise<any[]> {
+    try {
+      // 💾 Try to fetch from MongoDB database first
+      const query: any = {};
+      
+      // Build MongoDB query
+      if (filters.status) query.status = filters.status;
+      if (filters.priority) query.priority = filters.priority;
+      if (filters.type) query.type = filters.type;
+      if (filters.startDate || filters.endDate) {
+        query.createdAt = {};
+        if (filters.startDate) query.createdAt.$gte = filters.startDate;
+        if (filters.endDate) query.createdAt.$lte = filters.endDate;
+      }
+
+      const dbBookings = await this.bookingModel
+        .find(query)
+        .sort({ createdAt: -1 })
+        .limit(filters.limit || 50)
+        .exec();
+
+      console.log(`✅ Retrieved ${dbBookings.length} bookings from database`);
+      
+      // Also get in-memory bookings (for any that failed to save to DB)
+      let memoryBookings = Array.from(this.bookings.values());
+      
+      // Filter out bookings that are already in database (avoid duplicates)
+      const dbBookingIds = new Set(dbBookings.map(b => b._id.toString()));
+      memoryBookings = memoryBookings.filter(b => !dbBookingIds.has(b._id.toString()));
+      
+      console.log(`✅ Retrieved ${memoryBookings.length} additional bookings from memory`);
+      
+      // Combine database and memory bookings
+      const allBookings = [...dbBookings, ...memoryBookings];
+      
+      if (allBookings.length > 0) {
+        return allBookings.slice(0, filters.limit || 20);
+      }
+    } catch (dbError) {
+      console.error('❌ Database query failed, falling back to in-memory:', dbError);
+    }
+
+    // 🗂️ Fallback to in-memory storage
     let bookings = Array.from(this.bookings.values());
 
     // Apply filters
@@ -529,6 +633,7 @@ export class BookingService {
     // Sort by creation date (newest first)
     bookings.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
+    console.log(`📋 Retrieved ${bookings.length} bookings from in-memory storage`);
     return bookings.slice(0, filters.limit || 50);
   }
 
@@ -783,31 +888,182 @@ export class BookingService {
     }
   }
 
+  /**
+   * 🔔 Enhanced real-time booking status updates (Phase 4)
+   * Broadcasts booking status changes to all relevant stakeholders with rich data
+   */
   private emitBookingUpdate(bookingId: string, status: BookingStatus, additionalData?: any) {
     const booking = this.bookings.get(bookingId);
-    if (booking && this.socketService) {
-      const updateData = {
-        bookingId,
-        status,
-        userId: booking.userId,
-        assignedDriver: booking.assignedDriver,
-        location: booking.currentLocation,
-        timestamp: new Date(),
-        ...additionalData
-      };
-
-      // Emit to all stakeholders
-      this.emitBookingEvent('booking:status_updated', updateData);
-      
-      // If driver is assigned, notify them specifically
-      if (booking.assignedDriver) {
-        this.socketService.sendMessageToDriver(
-          booking.assignedDriver.driverId, 
-          'booking:status_updated', 
-          updateData
-        );
-      }
+    if (!booking || !this.socketService) {
+      return;
     }
+
+    // Build comprehensive update data
+    const updateData = {
+      bookingId,
+      bookingNumber: booking.bookingNumber,
+      status,
+      previousStatus: booking.timeline[booking.timeline.length - 2]?.status || null,
+      userId: booking.userId,
+      assignedDriver: booking.assignedDriver ? {
+        driverId: booking.assignedDriver.driverId,
+        driverName: booking.assignedDriver.driverName,
+        vehicleNumber: booking.assignedDriver.vehicleDetails?.vehicleNumber,
+        contactPhone: booking.assignedDriver.contactPhone
+      } : null,
+      currentLocation: booking.currentLocation,
+      pickupLocation: booking.pickupLocation,
+      dropoffLocation: booking.dropoffLocation,
+      priority: booking.priority,
+      bookingType: booking.bookingType,
+      tracking: booking.tracking,
+      timeline: booking.timeline.slice(-3), // Last 3 timeline entries
+      timestamp: new Date(),
+      ...additionalData
+    };
+
+    // 1️⃣ Broadcast to booking-specific room (all participants)
+    this.emitBookingEvent('booking:status_updated', updateData);
+    
+    // 2️⃣ Send personalized notification to user
+    this.socketService.sendMessageToUser(
+      booking.userId,
+      'booking:personal_update',
+      {
+        ...updateData,
+        message: this.getStatusMessage(status, booking),
+        actions: this.getAvailableActions(status),
+        eta: updateData.tracking?.estimatedArrivalTime
+      }
+    );
+
+    // 3️⃣ If driver is assigned, send driver-specific update
+    if (booking.assignedDriver) {
+      this.socketService.sendMessageToDriver(
+        booking.assignedDriver.driverId,
+        'booking:driver_update',
+        {
+          ...updateData,
+          instructions: this.getDriverInstructions(status),
+          nextAction: this.getDriverNextAction(status),
+          patientInfo: booking.patientInfo
+        }
+      );
+    }
+
+    // 4️⃣ If hospital is involved, notify hospital
+    if (booking.dropoffLocation?.hospitalId) {
+      this.socketService.sendMessageToHospital(
+        booking.dropoffLocation.hospitalId,
+        'booking:hospital_update',
+        {
+          bookingId,
+          status,
+          patientInfo: booking.patientInfo,
+          estimatedArrival: updateData.tracking?.estimatedArrivalTime,
+          ambulanceDetails: booking.assignedDriver,
+          priority: booking.priority
+        }
+      );
+    }
+
+    // 5️⃣ For critical status updates, notify emergency executives
+    if (this.isCriticalStatusUpdate(status)) {
+      this.socketService.broadcastToEmergencyExecutives('booking:critical_update', {
+        bookingId,
+        bookingNumber: booking.bookingNumber,
+        status,
+        priority: booking.priority,
+        location: booking.currentLocation,
+        userId: booking.userId,
+        timestamp: new Date()
+      });
+    }
+
+    console.log(`📡 Real-time update broadcasted for booking ${booking.bookingNumber}: ${status}`);
+  }
+
+  /**
+   * Generate user-friendly status messages
+   */
+  private getStatusMessage(status: BookingStatus, booking: any): string {
+    const messages: Record<string, string> = {
+      [BookingStatus.REQUESTED]: "Your ambulance request is being processed. We're finding the best ambulance for you.",
+      [BookingStatus.CONFIRMED]: `Ambulance confirmed! Driver ${booking.assignedDriver?.driverName} will reach you shortly.`,
+      [BookingStatus.DRIVER_ASSIGNED]: "Driver assigned to your booking. They will contact you shortly.",
+      [BookingStatus.DRIVER_ENROUTE]: "Your ambulance is on the way! You can track it in real-time.",
+      [BookingStatus.DRIVER_ARRIVED]: "Your ambulance has arrived! Please proceed to the vehicle.",
+      [BookingStatus.PATIENT_PICKED]: "Patient picked up. On the way to hospital.",
+      [BookingStatus.IN_TRANSIT]: "En route to hospital. Estimated arrival time will be updated.",
+      [BookingStatus.ARRIVED_HOSPITAL]: "Arrived at hospital. Patient being transferred to medical staff.",
+      [BookingStatus.COMPLETED]: "Trip completed successfully. Thank you for using our service!",
+      [BookingStatus.CANCELLED]: "Booking has been cancelled. If this was an emergency, please call 911."
+    };
+    return messages[status] || `Status updated to ${status}`;
+  }
+
+  /**
+   * Get available actions for user based on current status
+   */
+  private getAvailableActions(status: BookingStatus): string[] {
+    const actions: Record<string, string[]> = {
+      [BookingStatus.REQUESTED]: ['cancel', 'call_support'],
+      [BookingStatus.CONFIRMED]: ['cancel', 'call_driver', 'track'],
+      [BookingStatus.DRIVER_ASSIGNED]: ['cancel', 'call_driver', 'track'],
+      [BookingStatus.DRIVER_ENROUTE]: ['call_driver', 'track'],
+      [BookingStatus.DRIVER_ARRIVED]: ['call_driver'],
+      [BookingStatus.PATIENT_PICKED]: ['call_driver', 'call_hospital'],
+      [BookingStatus.IN_TRANSIT]: ['call_driver', 'call_hospital'],
+      [BookingStatus.ARRIVED_HOSPITAL]: ['call_hospital'],
+      [BookingStatus.COMPLETED]: ['rate', 'receipt'],
+      [BookingStatus.CANCELLED]: ['rebook']
+    };
+    return actions[status] || [];
+  }
+
+  /**
+   * Get driver instructions based on status
+   */
+  private getDriverInstructions(status: BookingStatus): string {
+    const instructions: Record<string, string> = {
+      [BookingStatus.CONFIRMED]: "Please proceed to pickup location immediately",
+      [BookingStatus.DRIVER_ASSIGNED]: "Navigate to pickup location and contact patient",
+      [BookingStatus.DRIVER_ENROUTE]: "Navigate to pickup location and update your status when arrived",
+      [BookingStatus.DRIVER_ARRIVED]: "Update status to 'Patient Picked' once patient is in ambulance",
+      [BookingStatus.PATIENT_PICKED]: "Proceed to hospital. Drive safely and update arrival status",
+      [BookingStatus.IN_TRANSIT]: "Continue to hospital with patient. Monitor patient condition",
+      [BookingStatus.ARRIVED_HOSPITAL]: "Transfer patient to hospital staff",
+      [BookingStatus.COMPLETED]: "Trip completed. Please prepare for next assignment"
+    };
+    return instructions[status] || "Follow standard protocol for this status";
+  }
+
+  /**
+   * Get next action for driver
+   */
+  private getDriverNextAction(status: BookingStatus): string {
+    const nextActions: Record<string, string> = {
+      [BookingStatus.CONFIRMED]: "Navigate to pickup",
+      [BookingStatus.DRIVER_ASSIGNED]: "Contact patient and navigate to pickup",
+      [BookingStatus.DRIVER_ENROUTE]: "Update arrival status",
+      [BookingStatus.DRIVER_ARRIVED]: "Pick up patient",
+      [BookingStatus.PATIENT_PICKED]: "Navigate to hospital",
+      [BookingStatus.IN_TRANSIT]: "Update hospital arrival",
+      [BookingStatus.ARRIVED_HOSPITAL]: "Transfer patient",
+      [BookingStatus.COMPLETED]: "Mark available"
+    };
+    return nextActions[status] || "Check app for next steps";
+  }
+
+  /**
+   * Check if status update is critical and needs emergency executive notification
+   */
+  private isCriticalStatusUpdate(status: BookingStatus): boolean {
+    return [
+      BookingStatus.CANCELLED,
+      BookingStatus.PATIENT_PICKED, // Critical - patient is in ambulance
+      BookingStatus.ARRIVED_HOSPITAL // Critical - patient delivered
+    ].includes(status);
   }
 
   /**
